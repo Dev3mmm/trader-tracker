@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trader Live Tracker</title><meta name="robots" content="noindex,nofollow">
+<style>
+:root{--bg:#0e1117;--card:#171b24;--card2:#1d2230;--tx:#e6e9ef;--mut:#8b93a5;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--ac:#6366f1;--line:#232938}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif;padding:16px;max-width:1400px;margin:auto}
+h1{font-size:22px;margin:0 0 2px}h2{font-size:13px;margin:26px 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+a{color:#8ea0ff;text-decoration:none}.pos{color:var(--ok)}.neg{color:var(--bad)}.mut{color:var(--mut)}.warn{color:var(--warn)}
+.clocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}
+.clock,.card{background:var(--card);border-radius:10px;padding:10px 12px}
+.clock b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.clock span{color:var(--mut);font-size:12px}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:10px;overflow:hidden}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:500;font-size:12px}
+tr.sess{cursor:pointer}tr.sess:hover{background:var(--card2)}
+.tag{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap}
+.live{background:var(--bad);color:#fff;animation:p 1.4s infinite}.soon{background:var(--warn);color:#000}.later{background:#2a3144;color:var(--mut)}.done{background:#243044;color:#9fb0d0}
+@keyframes p{50%{opacity:.55}}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.livecard{display:grid;grid-template-columns:minmax(260px,420px) 1fr;gap:12px;background:var(--card);border-radius:12px;padding:10px;margin-bottom:10px;border:1px solid #3a2330}
+.livecard img{width:100%;border-radius:8px;display:block;cursor:zoom-in}
+.big{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+.ev{display:grid;grid-template-columns:70px 1fr;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px}
+.thumbs figure{margin:0;background:var(--card2);border-radius:8px;overflow:hidden}.thumbs img{width:100%;display:block;cursor:zoom-in}
+.thumbs figcaption{padding:5px 7px;font-size:11px;color:var(--mut)}
+.detail{background:var(--card2);padding:12px}
+canvas{width:100%;height:120px;background:#12161f;border-radius:8px}
+select,input{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+#lb{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:9;cursor:zoom-out}#lb img{max-width:96vw;max-height:94vh}
+@media(max-width:760px){.livecard{grid-template-columns:1fr}th:nth-child(n+7),td:nth-child(n+7){display:none}}
+</style></head><body>
+<h1>Trader Live Tracker</h1>
+<div class="mut" id="upd"></div>
+<div class="clocks" id="clocks"></div>
+
+<h2>Recording live right now</h2>
+<div id="livebox"></div>
+
+<h2>Scheduled &amp; live on YouTube</h2>
+<table id="sched"><thead><tr><th>Status</th><th>Trader</th><th>Show</th><th>Starts in</th><th>London</th><th>Nairobi</th><th>Dubai</th><th>New York</th></tr></thead><tbody></tbody></table>
+
+<h2>Scorecard (from recorded sessions)</h2>
+<div class="grid" id="score"></div>
+
+<h2>Sessions <select id="fTrader"></select> <label class="mut"><input type="checkbox" id="fTrades"> only sessions with trades / P&amp;L</label></h2>
+<table id="sessions"><thead><tr><th>Date</th><th>Trader</th><th>Stream</th><th>Length</th><th>Trades</th><th>P/L (from screen)</th><th>Status</th></tr></thead><tbody></tbody></table>
+
+<h2>Hand-checked ledger</h2>
+<table id="ledger"><thead><tr><th>Date</th><th>Trader</th><th>Session</th><th>Net P/L</th><th>Notes</th></tr></thead><tbody></tbody></table>
+<div class="mut" style="margin-top:14px;font-size:12px">P/L numbers are read by OCR from the trader's own on-screen box (floating or daily P&amp;L). They are NOT verified broker statements. Every number has screenshots to check it.</div>
+<div id="lb"><img alt=""></div>
+
+<script>
+const ZONES=[["London","Europe/London"],["Nairobi","Africa/Nairobi"],["Dubai","Asia/Dubai"],["New York","America/New_York"]];
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=(ts,tz)=>new Date(ts*1000).toLocaleString("en-GB",{timeZone:tz,weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+const money=v=>v==null?"-":(v<0?"-":"+")+"$"+Math.abs(Math.round(v)).toLocaleString();
+const cls=v=>v==null?"mut":v>=0?"pos":"neg";
+const hm=s=>{s=Math.round(s||0);return Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"};
+const tm=s=>{s=Math.round(s||0);return Math.floor(s/3600)+":"+String(Math.floor(s%3600/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")};
+let OPEN=new Set();
+
+function sessPL(s){const m=s.summary||{};
+ if(m.realized_est!=null)return{v:m.realized_est,l:"realized est."};
+ if(m.day_pl!=null)return{v:m.day_pl,l:"day P&L box"};
+ if(m.last_pl!=null)return{v:m.last_pl,l:"last reading"};return{v:null,l:""}}
+
+function clocks(){document.getElementById("clocks").innerHTML=ZONES.map(([n,z])=>`<div class="clock"><span>${n}</span><b>${new Date().toLocaleTimeString("en-GB",{timeZone:z,hour:"2-digit",minute:"2-digit",hour12:false})}</b></div>`).join("")}
+
+function spark(cv,series,events){
+ const c=cv.getContext("2d"),W=cv.width=cv.clientWidth*2,H=cv.height=cv.clientHeight*2;c.clearRect(0,0,W,H);
+ if(!series||series.length<2){c.fillStyle="#8b93a5";c.font="22px sans-serif";c.fillText("no P/L readings from the screen for this stream",20,H/2);return}
+ const xs=series.map(p=>p[0]),ys=series.map(p=>p[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(0,...ys),y1=Math.max(0,...ys),sx=t=>20+(t-x0)/(x1-x0||1)*(W-40),sy=v=>H-20-(v-y0)/(y1-y0||1)*(H-40);
+ c.strokeStyle="#334";c.beginPath();c.moveTo(0,sy(0));c.lineTo(W,sy(0));c.stroke();
+ c.strokeStyle="#6ea8ff";c.lineWidth=3;c.beginPath();series.forEach((p,i)=>i?c.lineTo(sx(p[0]),sy(p[1])):c.moveTo(sx(p[0]),sy(p[1])));c.stroke();
+ (events||[]).filter(e=>["entry","exit","partial_close","order_placed"].includes(e.type)).forEach(e=>{c.fillStyle=e.type=="entry"?"#22c55e":e.type=="order_placed"?"#f59e0b":"#ef4444";c.beginPath();c.arc(sx(e.t),H-8,7,0,7);c.fill()});
+ c.fillStyle="#8b93a5";c.font="20px sans-serif";c.fillText(money(y1),4,20);c.fillText(money(y0),4,H-4)}
+
+function evHTML(e){return `<div class="ev"><div class="mut">${tm(e.t)}</div><div><b>${esc(e.type.replace("_"," "))}</b> ${esc(e.text||"")}${e.img?` <a href="#" data-img="${esc(e.img)}">screenshot</a>`:""}${e.img_note?` <span class="mut">(${esc(e.img_note)})</span>`:""}</div></div>`}
+
+function detailHTML(s){
+ const evs=(s.events||[]).filter(e=>e.type!="snapshot"),snaps=(s.events||[]).filter(e=>e.type=="snapshot");
+ const thumbs=evs.filter(e=>e.img).concat(snaps).map(e=>`<figure><img loading="lazy" src="${esc(e.img)}" data-img="${esc(e.img)}"><figcaption>${tm(e.t)} ${esc(e.type.replace("_"," "))}</figcaption></figure>`).join("")
+  ||(s.gallery||[]).map(g=>`<figure><img loading="lazy" src="${esc(g)}" data-img="${esc(g)}"></figure>`).join("");
+ return `<div class="detail"><canvas data-sid="${esc(s.id)}"></canvas>
+  <div style="margin-top:8px"><a href="${esc(s.url)}" target="_blank">Open stream</a> <span class="mut">- source: ${esc(s.source)}. ${esc((s.summary||{}).note||"")}</span></div>
+  <div style="margin-top:6px">${evs.map(evHTML).join("")||'<div class="mut">No entry/exit events detected from the screen (the panel may be missing from this stream).</div>'}</div>
+  <div class="thumbs">${thumbs}</div></div>`}
+
+function render(){
+ clocks();const S=window.STATUS||{traders:[]},now=Date.now()/1000,SE=window.SESSIONS||[],LV=window.LIVE||[],L=window.LEDGER||[];
+ document.getElementById("upd").textContent="Schedule checked (UTC): "+(S.updated||"never")+" | auto-refreshes every 30s | recorder watching: "+(LV.length?LV.length+" live stream(s)":"nobody live right now");
+ // live recording
+ document.getElementById("livebox").innerHTML=LV.length?LV.map(v=>{const m=v.summary||{},pl=(v.last&&v.last.pl!=null)?v.last.pl:m.last_pl;
+  const s=SE.find(x=>x.url==v.url),evs=s?(s.events||[]).filter(e=>e.type!="snapshot").slice(-6).reverse():[];
+  return `<div class="livecard"><div><img src="${esc(v.img)}" data-img="${esc(v.img)}"></div><div>
+   <span class="tag live">LIVE</span> <b>${esc(v.trader)}</b> <span class="mut">recording ${hm(v.elapsed)}</span>
+   <div><a href="${esc(v.url)}" target="_blank">${esc(v.title)}</a></div>
+   <div class="big ${cls(pl)}">${pl==null?'<span class="mut">no P/L box visible</span>':money(pl)}</div>
+   <div class="mut">trades seen: ${m.entries||0} entries / ${m.exits||0} exits - events saved: ${v.events}</div>
+   <div>${evs.map(evHTML).join("")}</div></div></div>`}).join(""):`<div class="card mut">No tracked trader is live right now. The recorder checks every 90 seconds and starts by itself.</div>`;
+ // schedule
+ const rows=[];S.traders.forEach(t=>{
+  t.live.forEach(v=>rows.push({o:0,h:`<tr><td><span class="tag live">LIVE</span></td><td>${esc(t.name)}</td><td><a href="${v.url}" target="_blank">${esc(v.title)}</a></td><td>now</td><td colspan="4"></td></tr>`}));
+  t.upcoming.forEach(v=>{const s=v.start_utc,d=s?s-now:null,tag=d!==null&&d<3600?"soon":"later";
+   rows.push({o:s||9e12,h:`<tr><td><span class="tag ${tag}">${tag=="soon"?"SOON":"UPCOMING"}</span></td><td>${esc(t.name)}</td><td><a href="${v.url}" target="_blank">${esc(v.title)}</a></td><td>${s?(d<=0?"now":Math.floor(d/3600)+"h "+Math.floor(d%3600/60)+"m"):"?"}</td>${ZONES.map(([n,z])=>`<td>${s?fmt(s,z):"-"}</td>`).join("")}</tr>`})});
+ });rows.sort((a,b)=>a.o-b.o);
+ document.querySelector("#sched tbody").innerHTML=rows.map(r=>r.h).join("")||`<tr><td colspan="8" class="mut">Nothing scheduled right now.</td></tr>`;
+ // scorecard
+ const ag={};SE.forEach(s=>{const a=ag[s.trader_name]??={n:0,tr:0,pl:0,w:0,l:0,days:0};a.n++;const p=sessPL(s);if((s.summary||{}).entries||p.v!=null)a.tr++;
+  if(p.v!=null){a.pl+=p.v;a.days++;p.v>=0?a.w++:a.l++}});
+ document.getElementById("score").innerHTML=Object.keys(ag).map(k=>{const a=ag[k];return `<div class="card"><b>${esc(k)}</b>
+  <div class="big ${cls(a.pl)}">${a.days?money(a.pl):"-"}</div><div class="mut">${a.n} sessions recorded, ${a.tr} with a trade/P&amp;L on screen</div>
+  <div>${a.w} up days / ${a.l} down days <span class="mut">(sum of per-session readings)</span></div></div>`}).join("")||'<div class="card mut">No sessions yet.</div>';
+ // sessions
+ const fs=document.getElementById("fTrader"),cur=fs.value;
+ const names=[...new Set(SE.map(s=>s.trader_name))];
+ if(fs.options.length!=names.length+1){fs.innerHTML='<option value="">all traders</option>'+names.map(n=>`<option>${esc(n)}</option>`).join("");fs.value=cur}
+ const only=document.getElementById("fTrades").checked;
+ const list=SE.filter(s=>(!fs.value||s.trader_name==fs.value)&&(!only||(s.summary||{}).entries||sessPL(s).v!=null));
+ document.querySelector("#sessions tbody").innerHTML=list.map(s=>{const p=sessPL(s),m=s.summary||{},open=OPEN.has(s.id);
+  return `<tr class="sess" data-sid="${esc(s.id)}"><td>${esc(s.date)}</td><td>${esc(s.trader_name)}</td><td>${esc((s.title||"").slice(0,80))}</td><td>${hm(s.duration_s)}</td>
+  <td>${m.entries??"-"} in / ${m.exits??"-"} out</td><td class="${cls(p.v)}"><b>${money(p.v)}</b> <span class="mut">${p.l}</span></td><td><span class="tag ${s.status=="live"?"live":"done"}">${s.status=="live"?"LIVE":"recorded"}</span></td></tr>
+  ${open?`<tr><td colspan="7" style="padding:0">${detailHTML(s)}</td></tr>`:""}`}).join("")||`<tr><td colspan="7" class="mut">No sessions match.</td></tr>`;
+ document.querySelectorAll("canvas[data-sid]").forEach(cv=>{const s=SE.find(x=>x.id==cv.dataset.sid);spark(cv,s.series,s.events)});
+ document.querySelector("#ledger tbody").innerHTML=L.map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.trader)}</td><td><a href="${esc(r.url)}" target="_blank">${esc((r.session||"").slice(0,70))}</a></td><td class="${cls(r.net_pl)}">${money(r.net_pl)}</td><td class="mut" style="max-width:520px">${esc((r.notes||"").slice(0,260))}</td></tr>`).join("")}
+
+document.addEventListener("click",e=>{
+ const im=e.target.closest("[data-img]");if(im){e.preventDefault();const lb=document.getElementById("lb");lb.querySelector("img").src=im.dataset.img;lb.style.display="flex";return}
+ if(e.target.closest("#lb")){document.getElementById("lb").style.display="none";return}
+ const tr=e.target.closest("tr.sess");if(tr){const id=tr.dataset.sid;OPEN.has(id)?OPEN.delete(id):OPEN.add(id);render()}});
+document.getElementById("fTrader").onchange=document.getElementById("fTrades").onchange=render;
+
+const RAW="https://raw.githubusercontent.com/Dev3mmm/trader-tracker/data/";
+async function jget(f){try{const r=await fetch(RAW+"data/"+f+".json?"+Date.now());return await r.json()}catch(e){return null}}
+async function tick(){const [a,b,c,d]=await Promise.all(["live","sessions","status","ledger"].map(jget));if(a)window.LIVE=a;if(b)window.SESSIONS=b;if(c)window.STATUS=c;if(d)window.LEDGER=d;if(!document.querySelector("#lb[style*=flex]"))render()}
+tick();setInterval(tick,30000);setInterval(clocks,30000);
+</script></body></html>

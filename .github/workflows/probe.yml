@@ -1,0 +1,30 @@
+name: probe-youtube-from-github
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: install
+        run: |
+          pip install -U "yt-dlp[default]" >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg nodejs >/dev/null
+          yt-dlp --version; ffmpeg -version | head -1; node --version
+      - name: can GitHub see the live list?
+        run: |
+          for c in https://www.youtube.com/@Omnius-Trades https://www.youtube.com/@RipsTrades https://www.youtube.com/@TradewithPat https://www.youtube.com/@PashaIRL https://www.youtube.com/@SmoothTraderTV; do
+            echo "== $c"; yt-dlp --flat-playlist --playlist-end 4 --print "%(id)s|%(live_status)s|%(title)s" "$c/streams" 2>&1 | head -6
+          done | tee list.txt
+      - name: can GitHub get a live frame?
+        run: |
+          VID=$(grep "|is_live|" list.txt | head -1 | cut -d'|' -f1)
+          echo "live video: [$VID]"
+          if [ -n "$VID" ]; then
+            URL=$(yt-dlp --js-runtimes node -g -f "bv*[height<=480]/worstvideo/worst" "https://www.youtube.com/watch?v=$VID" 2>&1 | tail -3); echo "$URL" | cut -c1-120
+            U=$(echo "$URL" | grep -m1 '^http'); [ -n "$U" ] && ffmpeg -loglevel error -y -i "$U" -frames:v 1 -vf scale=1280:720 frame.jpg && ls -la frame.jpg
+          else echo "nobody live to test with"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: probe, path: "frame.jpg\nlist.txt", if-no-files-found: ignore }
